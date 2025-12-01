@@ -13,14 +13,10 @@ def get_catalog():
 
     raw_nodes = CatalogService.get_catalog_sections(sections)
 
-    print(raw_nodes)
-
     response_data = {
         section: [MovieTransformer.transform(node) for node in nodes]
         for section, nodes in raw_nodes.items()
     }
-
-    print(response_data)
 
     return jsonify(response_data), 200
 

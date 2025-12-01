@@ -1,6 +1,5 @@
 from neomodel import db
 from app.models.movie import Movie
-from app.models.genre import Genre
 
 
 class CatalogRepository:
@@ -58,11 +57,7 @@ class CatalogRepository:
         search_term = query.strip() + "*"
 
         query = """
-        // 1. Search the 'movieSearch' Full-Text Index on Movie title and overview.
         CALL db.index.fulltext.queryNodes('movieSearch', $search_term) YIELD node AS m, score AS ft_score
-
-        // 2. Calculate a final weighted score for ranking.
-        // Rank = (70% Relevance from FTS score) + (30% Quality from vote_average).
         WITH m, ft_score
         WITH m, (ft_score * 0.7) + (m.vote_average * 0.03) AS final_score
 
@@ -70,11 +65,8 @@ class CatalogRepository:
         ORDER BY final_score DESC
         LIMIT $limit
         """
-        
-        # Execute the query, passing the search term
-        results, _ = db.cypher_query(query, {'search_term': search_term, 'limit': limit})
 
-        # Manually inflate the Movie nodes
+        results, _ = db.cypher_query(query, {'search_term': search_term, 'limit': limit})
         return [Movie.inflate(row[0]) for row in results]
 
 
@@ -114,7 +106,6 @@ class CatalogRepository:
             'limit': limit
         })
 
-        # Manually inflate the Movie nodes
         return [Movie.inflate(row[0]) for row in results]
 
 
@@ -164,7 +155,6 @@ class CatalogRepository:
         search_nodes = results[0][0]
         recommendation_nodes = results[0][1]
         
-        # Inflate the nodes back into Python objects
         search_results = [Movie.inflate(node) for node in search_nodes]
         recommendations = [Movie.inflate(node) for node in recommendation_nodes]
         
