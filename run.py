@@ -1,4 +1,7 @@
 from app import create_app
+import dotenv
+
+dotenv.load_dotenv()
 
 app = create_app()
 
