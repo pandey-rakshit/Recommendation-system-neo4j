@@ -1,8 +1,14 @@
 /******************************************************
- *  MOVIE CARD TEMPLATE (No overlay poster, no duplicate)
+ *  CONFIGURATION
+ ******************************************************/
+const PLACEHOLDER_IMAGE = "/static/imgs/no_img.png";
+
+
+/******************************************************
+ *  MOVIE CARD TEMPLATE
  ******************************************************/
 function movieCard(movie) {
-    const posterUrl = movie.poster_url || "";
+    const posterUrl = movie.poster_url || PLACEHOLDER_IMAGE;
 
     return `
     <div class="movie-card hover-card" data-poster="${posterUrl}">
@@ -10,13 +16,13 @@ function movieCard(movie) {
         <!-- Poster -->
         <div class="poster-wrapper">
             <img class="poster" style="display:none;">
-            <div class="no-poster" style="display:none;">No Image</div>
+            <img class="placeholder" src="${PLACEHOLDER_IMAGE}" style="display:none;">
         </div>
 
-        <!-- Always visible title -->
+        <!-- Movie Title -->
         <div class="card-title">${movie.title || "Untitled"}</div>
 
-        <!-- Expanding info panel on hover -->
+        <!-- Hover Panel -->
         <div class="hover-info">
             <h3>${movie.title || "Untitled"}</h3>
 
@@ -35,7 +41,7 @@ function movieCard(movie) {
 
 
 /******************************************************
- *  POSTER VALIDATION (404-proof)
+ *  POSTER VALIDATION (404-SAFE)
  ******************************************************/
 function verifyPosters() {
     document.querySelectorAll(".movie-card").forEach(card => {
@@ -43,10 +49,10 @@ function verifyPosters() {
         const img = new Image();
 
         const posterElem = card.querySelector(".poster");
-        const noPosterElem = card.querySelector(".no-poster");
+        const placeholderElem = card.querySelector(".placeholder");
 
-        if (!posterUrl) {
-            noPosterElem.style.display = "flex";
+        if (!posterUrl || posterUrl.trim() === "") {
+            placeholderElem.style.display = "block";
             return;
         }
 
@@ -56,7 +62,7 @@ function verifyPosters() {
         };
 
         img.onerror = () => {
-            noPosterElem.style.display = "flex";
+            placeholderElem.style.display = "block";
         };
 
         img.src = posterUrl;
@@ -65,52 +71,82 @@ function verifyPosters() {
 
 
 /******************************************************
- *  RENDER HOMEPAGE SECTIONS
+ *  HOMEPAGE LOADING (DYNAMIC + CONDITIONAL)
  ******************************************************/
 function renderHomeSections(sections) {
-    document.getElementById("popular").innerHTML =
-        (sections.popular || []).map(movieCard).join("");
+    const container = document.getElementById("dynamic-sections");
+    container.innerHTML = ""; // reset
 
-    document.getElementById("trending").innerHTML =
-        (sections.trending || []).map(movieCard).join("");
+    Object.keys(sections).forEach(name => {
+        const movies = sections[name];
+        if (!movies || movies.length < 4) return; // skip small sections
 
-    document.getElementById("topRated").innerHTML =
-        (sections.topRated || []).map(movieCard).join("");
+        const sectionHtml = `
+            <div class="section-block">
+                <h2 class="section-title">${name}</h2>
+                <div id="section-${name}" class="movie-grid">
+                    ${movies.map(movieCard).join("")}
+                </div>
+            </div>
+        `;
+
+        container.insertAdjacentHTML("beforeend", sectionHtml);
+    });
 
     verifyPosters();
 }
 
 
 /******************************************************
- *  LOAD HOMEPAGE SECTIONS (with caching)
+ *  LOAD HOMEPAGE SECTIONS (DYNAMIC)
  ******************************************************/
 async function loadHomeSections() {
-    const cacheKey = "homepage_sections_cache";
+    const container = document.getElementById("dynamic-sections");
+    const loading = document.getElementById("loading-placeholder");
 
-    const cached = sessionStorage.getItem(cacheKey);
-    if (cached) {
-        renderHomeSections(JSON.parse(cached));
-        return;
+    try {
+        const res = await fetch(`/api/catalog?sections=`);
+        const data = await res.json();
+
+        // hide loading skeleton
+        loading.style.display = "none";
+
+        // render dynamic sections
+        renderHomeSections(data.sections);
+
+        // cache it
+        sessionStorage.setItem("homepage_sections_cache", JSON.stringify(data.sections));
+
+    } catch (err) {
+        console.error("Error loading homepage sections", err);
+        loading.innerHTML = "<p>Error loading content.</p>";
     }
-
-    const res = await fetch(`/api/catalog?sections=`);
-    const data = await res.json();
-
-    sessionStorage.setItem(cacheKey, JSON.stringify(data.sections));
-
-    renderHomeSections(data.sections);
 }
 
 
 /******************************************************
- *  RENDER SEARCH RESULTS
+ *  SEARCH RESULTS
  ******************************************************/
 function renderSearchResults(data) {
-    document.getElementById("search-results").innerHTML =
-        data.search_results.map(movieCard).join("");
+    const searchContainer = document.getElementById("search-results-container");
+    const recContainer = document.getElementById("recommendations-container");
 
-    document.getElementById("recommendations").innerHTML =
-        data.recommendations.map(movieCard).join("");
+    // hide container if empty
+    if (!data.search_results.length) {
+        searchContainer.style.display = "none";
+    } else {
+        searchContainer.style.display = "block";
+        document.getElementById("search-results").innerHTML =
+            data.search_results.map(movieCard).join("");
+    }
+
+    if (!data.recommendations.length) {
+        recContainer.style.display = "none";
+    } else {
+        recContainer.style.display = "block";
+        document.getElementById("recommendations").innerHTML =
+            data.recommendations.map(movieCard).join("");
+    }
 
     verifyPosters();
 }
@@ -122,9 +158,8 @@ function renderSearchResults(data) {
 async function loadSearchResults(query) {
     const cacheKey = "search_" + query.toLowerCase();
 
-    const cached = sessionStorage.getItem(cacheKey);
-    if (cached) {
-        renderSearchResults(JSON.parse(cached));
+    if (sessionStorage.getItem(cacheKey)) {
+        renderSearchResults(JSON.parse(sessionStorage.getItem(cacheKey)));
         return;
     }
 
@@ -138,65 +173,56 @@ async function loadSearchResults(query) {
 
 
 /******************************************************
- *  DYNAMIC SECTIONS (Infinite scroll)
+ *  DYNAMIC LAZY-SECTIONS (Action, Comedy, Drama…)
  ******************************************************/
-const dynamicSections = [
-    "action",
-    "comedy",
-    "drama"
-];
-
+const dynamicSections = ["action", "comedy", "drama"];
 let nextSectionIndex = 0;
-let loadingMoreSections = false;
+let loadingMore = false;
 
 async function loadNextSection() {
-    if (loadingMoreSections) return;
+    if (loadingMore) return;
     if (nextSectionIndex >= dynamicSections.length) return;
 
-    loadingMoreSections = true;
+    loadingMore = true;
 
-    const section = dynamicSections[nextSectionIndex];
-    nextSectionIndex++;
+    const section = dynamicSections[nextSectionIndex++];
+    const container = document.getElementById("dynamic-sections");
 
-    const sectionId = `section_${section}`;
-
-    // add new section block
-    const html = `
-        <h2 class="section-title">${section.toUpperCase()}</h2>
-        <div id="${sectionId}" class="movie-grid"></div>
+    const sectionHtml = `
+        <div class="section-block">
+            <h2 class="section-title">${section}</h2>
+            <div id="dynamic-${section}" class="movie-grid"></div>
+        </div>
     `;
-    document.getElementById("home-mode").insertAdjacentHTML("beforeend", html);
+    container.insertAdjacentHTML("beforeend", sectionHtml);
 
-    // caching
     const cacheKey = "section_cache_" + section;
-    const cached = sessionStorage.getItem(cacheKey);
 
-    if (cached) {
-        const movies = JSON.parse(cached);
-        document.getElementById(sectionId).innerHTML =
+    if (sessionStorage.getItem(cacheKey)) {
+        const movies = JSON.parse(sessionStorage.getItem(cacheKey));
+        document.getElementById(`dynamic-${section}`).innerHTML =
             movies.map(movieCard).join("");
         verifyPosters();
-        loadingMoreSections = false;
+        loadingMore = false;
         return;
     }
 
-    // fetch
     const res = await fetch(`/api/catalog?sections=${section}`);
     const data = await res.json();
     const movies = data.sections[section] || [];
 
     sessionStorage.setItem(cacheKey, JSON.stringify(movies));
 
-    document.getElementById(sectionId).innerHTML =
+    document.getElementById(`dynamic-${section}`).innerHTML =
         movies.map(movieCard).join("");
 
     verifyPosters();
-    loadingMoreSections = false;
+    loadingMore = false;
 }
 
 
 /******************************************************
- *  PAGE INIT
+ *  INIT PAGE
  ******************************************************/
 async function init() {
     const params = new URLSearchParams(window.location.search);
@@ -217,10 +243,10 @@ init();
 
 
 /******************************************************
- *  INFINITE SCROLL LISTENER
+ *  INFINITE SCROLL TRIGGER
  ******************************************************/
 window.addEventListener("scroll", () => {
-    if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 300) {
+    if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 200) {
         loadNextSection();
     }
 });
