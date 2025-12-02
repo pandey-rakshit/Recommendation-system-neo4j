@@ -1,14 +1,22 @@
 from neo4j import GraphDatabase
 import pandas as pd
-import json
 import os
-
 from dotenv import load_dotenv
 
 load_dotenv()
 
-df = pd.read_csv("data/movies.csv")
+# -------------------------------------------------------------------
+# LOAD CLEANED CSV FILES (from your data/)
+# -------------------------------------------------------------------
+movies_df = pd.read_csv("data/movies.csv")
+genres_df = pd.read_csv("data/genres.csv")
+keywords_df = pd.read_csv("data/keywords.csv")
+cast_df = pd.read_csv("data/cast.csv")
+directors_df = pd.read_csv("data/directors.csv")
 
+# -------------------------------------------------------------------
+# CONNECT TO NEO4J
+# -------------------------------------------------------------------
 driver = GraphDatabase.driver(
     os.getenv("NEO4J_URI"),
     auth=(os.getenv("NEO4J_USERNAME"), os.getenv("NEO4J_PASSWORD"))
@@ -18,127 +26,149 @@ driver.verify_connectivity()
 print("Connected to Neo4j database.")
 
 
-def parse_list(value):
-    if pd.isna(value) or value == "[]":
-        return []
-    try:
-        data = json.loads(value.replace("'", '"'))
-        return [item.get("name") for item in data]
-    except:
-        return []
+# -------------------------------------------------------------------
+# CREATE INDEXES (USE YOUR WORKING FULLTEXT SYNTAX)
+# -------------------------------------------------------------------
+def create_indexes(tx):
 
-def create_fulltext_index(tx):
-
+    # YOUR WORKING FULLTEXT SYNTAX (unchanged)
     tx.run("""
-        CREATE FULLTEXT INDEX movieSearch IF NOT EXISTS 
+        CREATE FULLTEXT INDEX movieSearch IF NOT EXISTS
         FOR (m:Movie) ON EACH [m.title, m.overview]
     """)
 
-    tx.run("CREATE CONSTRAINT movie_id_unique IF NOT EXISTS FOR (m:Movie) REQUIRE m.movie_id IS UNIQUE")
-    tx.run("CREATE CONSTRAINT genre_name_unique IF NOT EXISTS FOR (g:Genre) REQUIRE g.name IS UNIQUE")
+    tx.run("""
+        CREATE CONSTRAINT movie_id_unique IF NOT EXISTS
+        FOR (m:Movie) REQUIRE m.movie_id IS UNIQUE
+    """)
+
+    tx.run("""
+        CREATE CONSTRAINT genre_unique IF NOT EXISTS
+        FOR (g:Genre) REQUIRE g.name IS UNIQUE
+    """)
+
+    tx.run("""
+        CREATE CONSTRAINT keyword_unique IF NOT EXISTS
+        FOR (k:Keyword) REQUIRE k.name IS UNIQUE
+    """)
+
+    tx.run("""
+        CREATE CONSTRAINT person_unique IF NOT EXISTS
+        FOR (p:Person) REQUIRE p.name IS UNIQUE
+    """)
 
 
+# -------------------------------------------------------------------
+# SEED MOVIES
+# -------------------------------------------------------------------
 def seed_movies(tx, rows):
     tx.run("""
         UNWIND $rows AS row
         MERGE (m:Movie {movie_id: row.movie_id})
-        SET m += row.properties
+        SET m.title = row.title,
+            m.overview = row.overview,
+            m.release_year = row.release_year,
+            m.runtime = row.runtime,
+            m.vote_average = row.vote_average,
+            m.vote_count = row.vote_count,
+            m.popularity = row.popularity,
+            m.poster_url = row.poster_url
     """, rows=rows)
 
 
+# -------------------------------------------------------------------
+# SEED GENRES
+# -------------------------------------------------------------------
 def seed_genres(tx, rows):
     tx.run("""
         UNWIND $rows AS row
         MATCH (m:Movie {movie_id: row.movie_id})
-        UNWIND row.genres AS g
-        MERGE (genre:Genre {name: g})
-        MERGE (m)-[:IN_GENRE]->(genre)
+        MERGE (g:Genre {name: row.genre})
+        MERGE (m)-[:HAS_GENRE]->(g)
     """, rows=rows)
 
 
+# -------------------------------------------------------------------
+# SEED KEYWORDS
+# -------------------------------------------------------------------
 def seed_keywords(tx, rows):
     tx.run("""
         UNWIND $rows AS row
         MATCH (m:Movie {movie_id: row.movie_id})
-        UNWIND row.keywords AS kw
-        MERGE (k:Keyword {name: kw})
+        MERGE (k:Keyword {name: row.keyword})
         MERGE (m)-[:HAS_KEYWORD]->(k)
     """, rows=rows)
 
 
-def seed_languages(tx, rows):
+# -------------------------------------------------------------------
+# SEED CAST
+# -------------------------------------------------------------------
+def seed_cast(tx, rows):
     tx.run("""
         UNWIND $rows AS row
         MATCH (m:Movie {movie_id: row.movie_id})
-        UNWIND row.languages AS lang
-        MERGE (l:Language {name: lang})
-        MERGE (m)-[:HAS_LANGUAGE]->(l)
+        MERGE (p:Person {name: row.name})
+            SET p.tmdb_id = row.person_id
+        MERGE (p)-[:ACTED_IN]->(m)
     """, rows=rows)
 
-def seed_movie_similarity(tx):
-    print("Executing Movie Similarity Calculation...")
+
+
+# -------------------------------------------------------------------
+# SEED DIRECTORS
+# -------------------------------------------------------------------
+def seed_directors(tx, rows):
     tx.run("""
-        MATCH (m1:Movie)-[:IN_GENRE|HAS_KEYWORD]->(trait)
-        <-[:IN_GENRE|HAS_KEYWORD]-(m2:Movie)
-        WHERE m1 <> m2 
-        WITH m1, m2, COUNT(DISTINCT trait) AS shared_traits
-        // Filter for movies that share a significant number of features
-        WHERE shared_traits > 3 
-        // MERGE the SIMILAR_TO relationship with the score (number of shared traits)
-        MERGE (m1)-[s:SIMILAR_TO]->(m2)
-        SET s.score = shared_traits
-    """)
+        UNWIND $rows AS row
+        MATCH (m:Movie {movie_id: row.movie_id})
+        MERGE (p:Person {name: row.director})
+        MERGE (p)-[:DIRECTED]->(m)
+    """, rows=rows)
 
-print("Preparing rows...")
-rows = []
-all_movie_ids = []
 
-for _, row in df.iterrows():
-    movie_id = int(row["id"])
-    all_movie_ids.append(movie_id)
-    
-    rows.append({
-        "movie_id": movie_id,
-        "properties": {
-            "title": row["title"],
-            "overview": row["overview"],
-            "popularity": float(row["popularity"]),
-            "vote_average": float(row["vote_average"]),
-            "vote_count": int(row["vote_count"]),
-            "release_date": row["release_date"],
-            "runtime": row["runtime"]
-        },
-        "genres": parse_list(row["genres"]),
-        "keywords": parse_list(row["keywords"]),
-        "languages": parse_list(row["spoken_languages"]),
-    })
+# -------------------------------------------------------------------
+# CHUNKING UTILITY
+# -------------------------------------------------------------------
+CHUNK = 400
+SIM_CHUNK = 50
 
-CHUNK = 300
+def chunkify(df):
+    for i in range(0, len(df), CHUNK):
+        yield df.iloc[i:i+CHUNK].to_dict("records")
 
-def chunkify(x):
-    return [x[i:i+CHUNK] for i in range(0, len(x), CHUNK)]
+def chunkify_list(lst, size):
+    for i in range(0, len(lst), size):
+        yield lst[i:i + size]
 
+
+
+# -------------------------------------------------------------------
+# RUN IMPORT PROCESS
+# -------------------------------------------------------------------
 with driver.session() as session:
+
     print("Creating indexes and constraints...")
-    session.execute_write(create_fulltext_index)
-    
+    session.execute_write(create_indexes)
+
     print("Seeding movies...")
-    for part in chunkify(rows):
-        session.execute_write(seed_movies, part)
+    for chunk in chunkify(movies_df):
+        session.execute_write(seed_movies, chunk)
 
     print("Seeding genres...")
-    for part in chunkify(rows):
-        session.execute_write(seed_genres, part)
+    for chunk in chunkify(genres_df):
+        session.execute_write(seed_genres, chunk)
 
     print("Seeding keywords...")
-    for part in chunkify(rows):
-        session.execute_write(seed_keywords, part)
+    for chunk in chunkify(keywords_df):
+        session.execute_write(seed_keywords, chunk)
 
-    print("Seeding languages...")
-    for part in chunkify(rows):
-        session.execute_write(seed_languages, part)
+    print("Seeding cast...")
+    for chunk in chunkify(cast_df):
+        session.execute_write(seed_cast, chunk)
 
-    print("Calculating and Seeding Movie Similarity (SIMILAR_TO)...")
-    session.execute_write(seed_movie_similarity)
+    print("Seeding directors...")
+    for chunk in chunkify(directors_df):
+        session.execute_write(seed_directors, chunk)
 
-print("Done! Full content graph seeded, including direct movie similarity links.")
+
+print("Done! Graph imported successfully with advanced similarity.")

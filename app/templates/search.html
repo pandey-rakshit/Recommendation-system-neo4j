@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 class="section-title">Results for "{{ query }}"</h2>
+
+<div class="movie-grid">
+    {% for movie in search_results %}
+        {% include "components/movie_card.html" %}
+    {% else %}
+        <p>No results found.</p>
+    {% endfor %}
+</div>
+
+{% if recommendations %}
+    <h2 class="section-title">Recommended Based on "{{ query }}"</h2>
+
+    <div class="movie-grid">
+        {% for movie in recommendations %}
+            {% include "components/movie_card.html" %}
+        {% endfor %}
+    </div>
+{% endif %}
+
+{% endblock %}

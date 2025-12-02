@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<!-- SEARCH MODE -->
+<div id="search-mode" style="display:none;">
+    <h2 class="section-title">Search Results</h2>
+    <div id="search-results" class="movie-grid"></div>
+
+    <h2 class="section-title">Recommendations</h2>
+    <div id="recommendations" class="movie-grid"></div>
+</div>
+
+<!-- HOMEPAGE MODE -->
+<div id="home-mode">
+    <h2 class="section-title">Popular</h2>
+    <div id="popular" class="movie-grid"></div>
+
+    <h2 class="section-title">Trending</h2>
+    <div id="trending" class="movie-grid"></div>
+
+    <h2 class="section-title">Top Rated</h2>
+    <div id="topRated" class="movie-grid"></div>
+</div>
+
+{% endblock %}

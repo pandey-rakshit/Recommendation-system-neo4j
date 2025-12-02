@@ -21,10 +21,10 @@ class CatalogService:
             dict: Dictionary containing 'search_results' and 'recommendations'.
         """
         
-        search_results, recommendations = CatalogRepository.search_and_recommend_unified(
+        search_results, recommendations = CatalogRepository.search_and_recommend(
             query=search_query,
             search_limit=search_limit,
-            recommendation_limit=rec_limit
+            rec_limit=rec_limit
         )
 
         if not search_results:
