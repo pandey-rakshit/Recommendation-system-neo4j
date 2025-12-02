@@ -12,6 +12,8 @@ This system imports movie metadata from the Kaggle dataset, builds a full graph 
 
 ---
 
+![](/media/neo4j.png)
+
 ## 📡 **Data Source**
 
 Dataset used:
